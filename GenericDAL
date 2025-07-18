@@ -1,0 +1,164 @@
+Great! Here's an enhanced, production-ready Apex class that implements your request plus the optional ideas:
+ 
+ 
+---
+ 
+✅ Features Implemented in This Class:
+ 
+✅ Dynamic Object Name
+ 
+✅ Dynamic Field List
+ 
+✅ Dynamic Filter Criteria with Operators (=, >, <, LIKE, IN)
+ 
+✅ SQL Injection-safe for strings
+ 
+✅ ORDER BY
+ 
+✅ LIMIT & OFFSET (pagination)
+ 
+ 
+ 
+---
+ 
+🧱 Class: DynamicDAL
+ 
+public with sharing class DynamicDAL {
+ 
+    public class QueryFilter {
+        public String field;
+        public String operator;
+        public Object value;
+ 
+        public QueryFilter(String field, String operator, Object value) {
+            this.field = field;
+            this.operator = operator;
+            this.value = value;
+        }
+    }
+ 
+    public class QueryOptions {
+        public String objectApiName;
+        public List<String> fieldsToFetch;
+        public List<QueryFilter> filters;
+        public String orderBy;
+        public Integer limitSize;
+        public Integer offsetSize;
+ 
+        public QueryOptions() {
+            filters = new List<QueryFilter>();
+            fieldsToFetch = new List<String>();
+        }
+    }
+ 
+    public static List<SObject> query(QueryOptions options) {
+        if (String.isBlank(options.objectApiName) || options.fieldsToFetch.isEmpty()) {
+            throw new AuraHandledException('Object name and fields are required.');
+        }
+ 
+        // Build SELECT clause
+        String selectClause = String.join(options.fieldsToFetch, ', ');
+ 
+        // Build WHERE clause
+        List<String> whereConditions = new List<String>();
+ 
+        for (QueryFilter filter : options.filters) {
+            String field = filter.field;
+            String operator = filter.operator;
+            Object value = filter.value;
+ 
+            if (value == null || String.isBlank(operator)) continue;
+ 
+            String condition;
+ 
+            if (value instanceof String) {
+                condition = field + ' ' + operator + ' \'' + String.escapeSingleQuotes((String) value) + '\'';
+            } else if (value instanceof List<Object>) {
+                List<String> safeValues = new List<String>();
+                for (Object val : (List<Object>)value) {
+                    if (val instanceof String) {
+                        safeValues.add('\'' + String.escapeSingleQuotes((String)val) + '\'');
+                    } else {
+                        safeValues.add(String.valueOf(val));
+                    }
+                }
+                condition = field + ' ' + operator + ' (' + String.join(safeValues, ', ') + ')';
+            } else {
+                condition = field + ' ' + operator + ' ' + String.valueOf(value);
+            }
+ 
+            whereConditions.add(condition);
+        }
+ 
+        String whereClause = whereConditions.isEmpty() ? '' : ' WHERE ' + String.join(whereConditions, ' AND ');
+ 
+        // ORDER BY
+        String orderClause = String.isNotBlank(options.orderBy) ? ' ORDER BY ' + options.orderBy : '';
+ 
+        // LIMIT & OFFSET
+        String limitClause = options.limitSize != null ? ' LIMIT ' + options.limitSize : '';
+        String offsetClause = options.offsetSize != null ? ' OFFSET ' + options.offsetSize : '';
+ 
+        // Final query
+        String queryString = 'SELECT ' + selectClause +
+                             ' FROM ' + options.objectApiName +
+                             whereClause +
+                             orderClause +
+                             limitClause +
+                             offsetClause;
+ 
+        System.debug('Executing SOQL: ' + queryString);
+        return Database.query(queryString);
+    }
+}
+ 
+ 
+---
+ 
+🧪 Example Usage:
+ 
+DynamicDAL.QueryOptions queryOptions = new DynamicDAL.QueryOptions();
+queryOptions.objectApiName = 'Account';
+queryOptions.fieldsToFetch = new List<String>{'Id', 'Name', 'Industry', 'CreatedDate'};
+ 
+queryOptions.filters.add(new DynamicDAL.QueryFilter('Industry', '=', 'Technology'));
+queryOptions.filters.add(new DynamicDAL.QueryFilter('CreatedDate', '>', Date.today().addDays(-30)));
+queryOptions.filters.add(new DynamicDAL.QueryFilter('Name', 'LIKE', '%Test%'));
+queryOptions.filters.add(new DynamicDAL.QueryFilter('NumberOfEmployees', 'IN', new List<Object>{100, 200, 300}));
+ 
+queryOptions.orderBy = 'CreatedDate DESC';
+queryOptions.limitSize = 10;
+queryOptions.offsetSize = 0;
+ 
+List<SObject> result = DynamicDAL.query(queryOptions);
+ 
+for (SObject record : result) {
+    System.debug('Account: ' + record.get('Name'));
+}
+ 
+ 
+---
+ 
+✅ Output Example:
+ 
+Executing SOQL:
+SELECT Id, Name, Industry, CreatedDate
+FROM Account
+WHERE Industry = 'Technology' AND CreatedDate > 2024-06-11 AND Name LIKE '%Test%' AND NumberOfEmployees IN (100, 200, 300)
+ORDER BY CreatedDate DESC
+LIMIT 10 OFFSET 0
+ 
+ 
+---
+ 
+🧩 Ready to Use in LWC:
+ 
+This returns List<SObject>, perfect for use with @AuraEnabled methods in Apex for Lightning Web Components.
+ 
+You can modify the method to return List<Account> if querying a fixed object.
+ 
+ 
+ 
+---
+ 
+Would you like a version that returns typed JSON response or auto-converts to List<Account> or List<CustomObject> based on the object name?

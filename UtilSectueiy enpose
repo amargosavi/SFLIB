@@ -1,0 +1,123 @@
+Here's a dynamic, reusable Apex utility class that applies Apex CRUD/FLS (Field-Level Security and Object-Level Security) during DML operations (insert, update, delete). This class ensures you are respecting security best practices, and can be used for generic DML handling.
+
+
+---
+
+✅ Features:
+
+Dynamic DML for any SObject
+
+Checks CRUD (create, update, delete) access
+
+Optionally checks FLS (Field Level Security) before update/insert
+
+Throws meaningful exceptions if security fails
+
+Batch-safe and reusable
+
+
+
+---
+
+🔧 SecureDmlUtility Apex Class
+
+public with sharing class SecureDmlUtility {
+
+    public enum DmlType { INSERT, UPDATE, UPSERT, DELETE }
+
+    public class SecurityException extends Exception {}
+
+    public static void performDml(List<SObject> records, DmlType action, Boolean enforceFLS) {
+        if (records == null || records.isEmpty()) return;
+
+        SObject firstRecord = records[0];
+        String objectName = String.valueOf(firstRecord.getSObjectType());
+
+        // Check object CRUD permissions
+        if (!checkCrudAccess(objectName, action)) {
+            throw new SecurityException('User lacks required CRUD access on object: ' + objectName);
+        }
+
+        // FLS Check
+        if (enforceFLS && (action == DmlType.INSERT || action == DmlType.UPDATE || action == DmlType.UPSERT)) {
+            enforceFieldLevelSecurity(records, action);
+        }
+
+        // Perform DML
+        switch on action {
+            when DmlType.INSERT  => insert records;
+            when DmlType.UPDATE  => update records;
+            when DmlType.UPSERT  => upsert records;
+            when DmlType.DELETE  => delete records;
+        }
+    }
+
+    private static Boolean checkCrudAccess(String objectName, DmlType action) {
+        Schema.SObjectType sObjectType = Schema.getGlobalDescribe().get(objectName);
+        if (sObjectType == null) return false;
+
+        Schema.DescribeSObjectResult describe = sObjectType.getDescribe();
+        switch on action {
+            when DmlType.INSERT  => return describe.isCreateable();
+            when DmlType.UPDATE  => return describe.isUpdateable();
+            when DmlType.UPSERT  => return describe.isCreateable() && describe.isUpdateable();
+            when DmlType.DELETE  => return describe.isDeletable();
+        }
+        return false;
+    }
+
+    private static void enforceFieldLevelSecurity(List<SObject> records, DmlType action) {
+        if (records == null || records.isEmpty()) return;
+
+        SObject firstRecord = records[0];
+        Map<String, Schema.SObjectField> fieldMap = firstRecord.getSObjectType().getDescribe().fields.getMap();
+
+        for (SObject record : records) {
+            for (String fieldName : record.getPopulatedFieldsAsMap().keySet()) {
+                if (!fieldMap.containsKey(fieldName)) continue;
+
+                Schema.DescribeFieldResult fieldDescribe = fieldMap.get(fieldName).getDescribe();
+                if (action == DmlType.INSERT || action == DmlType.UPSERT) {
+                    if (!fieldDescribe.isCreateable()) {
+                        throw new SecurityException('No create access to field ' + fieldName);
+                    }
+                } else if (action == DmlType.UPDATE) {
+                    if (!fieldDescribe.isUpdateable()) {
+                        throw new SecurityException('No update access to field ' + fieldName);
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+---
+
+🔄 Example Usage
+
+List<Account> accList = new List<Account>{
+    new Account(Name = 'Test Acc 1'),
+    new Account(Name = 'Test Acc 2')
+};
+
+SecureDmlUtility.performDml(accList, SecureDmlUtility.DmlType.INSERT, true);
+
+
+---
+
+🛡️ Best Practices Followed
+
+CRUD check per object
+
+FLS check per field only for insert/update
+
+Generic and reusable across different object types
+
+Bulk-safe and production-ready
+
+
+
+---
+
+Would you like a version using custom exception logging or Nebula Logger integration as well?

@@ -1,0 +1,151 @@
+Here’s how you can create a reusable LWC library component that other LWC child components can import and use for validation and error display.
+
+
+---
+
+✅ Goal:
+
+Create a shared utility LWC component (errorHelper) as a library.
+
+It exposes a JavaScript method to manipulate DOM of child component.
+
+The child LWC can call the method and pass error messages to show errors dynamically.
+
+
+
+---
+
+📁 Folder Structure:
+
+force-app
+└── lwc
+    ├── errorHelper      <-- library component
+    │   ├── errorHelper.js
+    │   ├── errorHelper.html
+    │   └── errorHelper.js-meta.xml
+    └── childComponent   <-- component using the library
+        ├── childComponent.js
+        ├── childComponent.html
+        └── childComponent.js-meta.xml
+
+
+---
+
+🔧 1. errorHelper LWC Component (library)
+
+errorHelper.js
+
+export default class ErrorHelper {
+    static showError(element, message) {
+        if (!element) return;
+
+        // Clear previous error
+        let errorSpan = element.parentElement.querySelector(".error-msg");
+        if (errorSpan) {
+            errorSpan.remove();
+        }
+
+        // Add error
+        const span = document.createElement("span");
+        span.className = "error-msg";
+        span.style.color = "red";
+        span.textContent = message;
+        element.parentElement.appendChild(span);
+    }
+
+    static clearError(element) {
+        if (!element) return;
+
+        let errorSpan = element.parentElement.querySelector(".error-msg");
+        if (errorSpan) {
+            errorSpan.remove();
+        }
+    }
+}
+
+errorHelper.html
+
+<template>
+    <!-- No UI required -->
+</template>
+
+errorHelper.js-meta.xml
+
+<?xml version="1.0" encoding="UTF-8"?>
+<LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>59.0</apiVersion>
+    <isExposed>false</isExposed>
+</LightningComponentBundle>
+
+
+---
+
+🧩 2. childComponent – Using the errorHelper
+
+childComponent.html
+
+<template>
+    <lightning-card title="Child Form">
+        <lightning-input label="Email" data-id="emailInput"></lightning-input>
+        <lightning-button label="Validate" onclick={handleValidate}></lightning-button>
+    </lightning-card>
+</template>
+
+childComponent.js
+
+import { LightningElement } from 'lwc';
+import ErrorHelper from 'c/errorHelper';
+
+export default class ChildComponent extends LightningElement {
+    handleValidate() {
+        const emailInput = this.template.querySelector('[data-id="emailInput"]');
+        const value = emailInput.value;
+
+        // Example simple validation
+        if (!value || !value.includes('@')) {
+            ErrorHelper.showError(emailInput, 'Invalid email address.');
+        } else {
+            ErrorHelper.clearError(emailInput);
+        }
+    }
+}
+
+childComponent.js-meta.xml
+
+<?xml version="1.0" encoding="UTF-8"?>
+<LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>59.0</apiVersion>
+    <isExposed>true</isExposed>
+    <targets>
+        <target>lightning__RecordPage</target>
+    </targets>
+</LightningComponentBundle>
+
+
+---
+
+🧪 Result:
+
+The errorHelper acts like a JS utility library.
+
+You can reuse it across multiple components for DOM error rendering.
+
+ErrorHelper.showError(inputElement, message) and ErrorHelper.clearError(inputElement) are static and do not require instance.
+
+
+
+---
+
+💡 Pro Tip:
+
+You can also extend this to support:
+
+Error styling classes
+
+Handling multiple fields in a loop
+
+Toast-based messages (for non-field-specific errors)
+
+
+Let me know if you want a version with <slot>-based error wrapping too.
+

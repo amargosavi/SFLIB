@@ -1,0 +1,7 @@
+String objectApiName = 'Contact';
+sObject sobj = Schema.getGlobalDescribe().get(objectApiName).newSObject();
+ 
+sobj.put('FirstName', 'John');
+sobj.put('LastName', 'Doe');
+ 
+insert sobj;

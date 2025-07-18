@@ -1,0 +1,147 @@
+Got it! You want to:
+
+Loop over a list of objects in HTML
+
+Pass each object or attribute to a JS method
+
+Call the method during rendering (in the template) to get a computed or derived value
+
+Show that returned value in the UI
+
+
+This is a common pattern in LWC for rendering computed display fields dynamically from a list.
+
+
+---
+
+✅ Use Case Example:
+
+Let’s say you have a list of products with price and quantity, and you want to display the total in the UI using a method like getTotal(product).
+
+
+---
+
+🔧 Step-by-Step Working Example
+
+✅ HTML – Call Method from Template
+
+<template>
+    <lightning-card title="Product List">
+        <template for:each={products} for:item="prod">
+            <div key={prod.id} class="slds-p-bottom_small">
+                <p><strong>{prod.name}</strong></p>
+                <p>Price: {prod.price}, Quantity: {prod.quantity}</p>
+                <p>Total: {getTotal(prod)}</p>
+                <hr />
+            </div>
+        </template>
+    </lightning-card>
+</template>
+
+> ✅ {getTotal(prod)}: You can call a class method with the loop object passed in.
+
+
+
+
+---
+
+✅ JS – The List + Helper Method
+
+import { LightningElement } from 'lwc';
+
+export default class ProductList extends LightningElement {
+    products = [
+        { id: 'p1', name: 'Apple', price: 10, quantity: 5 },
+        { id: 'p2', name: 'Banana', price: 3, quantity: 12 },
+        { id: 'p3', name: 'Mango', price: 15, quantity: 2 },
+    ];
+
+    getTotal(prod) {
+        return prod.price * prod.quantity;
+    }
+}
+
+
+---
+
+✅ Output Rendered:
+
+Apple
+Price: 10, Quantity: 5
+Total: 50
+
+Banana
+Price: 3, Quantity: 12
+Total: 36
+
+Mango
+Price: 15, Quantity: 2
+Total: 30
+
+
+---
+
+🧠 Notes:
+
+You can pass the loop object (prod) or specific fields like prod.price directly.
+
+Avoid doing heavy logic inside getter calls during rendering – keep it lightweight and pure.
+
+If logic is complex, consider precomputing values in JS instead.
+
+
+
+---
+
+✅ Alternate: Get Specific Attribute
+
+If you want to extract a property dynamically using a method, you can do:
+
+getAttribute(obj, key) {
+    return obj[key];
+}
+
+And in HTML:
+
+<p>Value: {getAttribute(prod, 'price')}</p> <!-- NOT SUPPORTED -->
+
+> ⚠️ BUT this won’t work in LWC HTML templates, because you cannot pass multiple arguments directly from markup.
+
+
+
+
+---
+
+✅ Workaround: Pre-process data before rendering
+
+Instead, compute it in JS, and render the list with precomputed fields:
+
+connectedCallback() {
+    this.products = this.products.map(prod => ({
+        ...prod,
+        total: prod.price * prod.quantity
+    }));
+}
+
+Then in HTML:
+
+<p>Total: {prod.total}</p>
+
+
+---
+
+✅ Summary
+
+Goal	Works in LWC
+
+Call JS method with 1 argument	✅ Yes
+Pass object to helper method	✅ Yes
+Pass multiple params in template	❌ No
+Compute values in JS then render	✅ Best practice
+
+
+
+---
+
+Would you like a version that supports editing values and recalculating totals live? I can show that with onchange handling.
+

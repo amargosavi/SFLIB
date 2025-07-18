@@ -1,0 +1,255 @@
+Great! Here's an enhanced version of the GenericDAL class in Apex that supports:
+
+
+---
+
+✅ Enhancements:
+
+1. Subqueries
+
+
+2. IN Clauses
+
+
+3. Dynamic Filtering via Maps
+
+
+4. Safe Parameter Handling, including special types like:
+
+Dates (TODAY, YESTERDAY, etc.)
+
+Strings (auto-quotes)
+
+Booleans
+
+Numbers
+
+Enums
+
+
+
+
+
+---
+
+🔧 Final Version: GenericDAL (Advanced Builder Style)
+
+public class GenericDAL {
+    private String sObjectName;
+    private List<String> fields = new List<String>();
+    private List<String> subqueries = new List<String>();
+    private List<String> whereConditions = new List<String>();
+    private String orderByClause = '';
+    private Integer limitSize;
+    private Integer offsetSize;
+
+    // ------------------------------
+    // Builder Pattern: Core Methods
+    // ------------------------------
+    public GenericDAL selectFields(List<String> fieldList) {
+        this.fields.addAll(fieldList);
+        return this;
+    }
+
+    public GenericDAL selectField(String field) {
+        this.fields.add(field);
+        return this;
+    }
+
+    public GenericDAL addSubquery(String subquery) {
+        this.subqueries.add(subquery);
+        return this;
+    }
+
+    public GenericDAL from(String sObjectName) {
+        this.sObjectName = sObjectName;
+        return this;
+    }
+
+    public GenericDAL where(String condition) {
+        this.whereConditions.add(condition);
+        return this;
+    }
+
+    public GenericDAL where(String field, String operator, Object value) {
+        this.whereConditions.add(buildCondition(field, operator, value));
+        return this;
+    }
+
+    public GenericDAL whereIn(String field, List<Object> values) {
+        if (values == null || values.isEmpty()) return this;
+        List<String> formatted = new List<String>();
+        for (Object val : values) {
+            formatted.add(formatValue(val));
+        }
+        this.whereConditions.add(field + ' IN (' + String.join(formatted, ', ') + ')');
+        return this;
+    }
+
+    public GenericDAL whereFromMap(Map<String, Object> filters) {
+        for (String key : filters.keySet()) {
+            Object val = filters.get(key);
+            this.where(key, '=', val);
+        }
+        return this;
+    }
+
+    public GenericDAL orderBy(String field, Boolean isAscending) {
+        this.orderByClause = 'ORDER BY ' + field + (isAscending ? ' ASC' : ' DESC');
+        return this;
+    }
+
+    public GenericDAL limit(Integer size) {
+        this.limitSize = size;
+        return this;
+    }
+
+    public GenericDAL offset(Integer size) {
+        this.offsetSize = size;
+        return this;
+    }
+
+    // ------------------------------
+    // Final Build + Execution
+    // ------------------------------
+    public List<SObject> execute() {
+        if (String.isBlank(sObjectName)) {
+            throw new IllegalArgumentException('sObject name must be specified.');
+        }
+        if (fields.isEmpty() && subqueries.isEmpty()) {
+            throw new IllegalArgumentException('At least one field or subquery must be selected.');
+        }
+
+        List<String> selectParts = new List<String>();
+        if (!fields.isEmpty()) selectParts.addAll(fields);
+        if (!subqueries.isEmpty()) selectParts.addAll(subqueries);
+
+        String query = 'SELECT ' + String.join(selectParts, ', ') +
+                       ' FROM ' + sObjectName;
+
+        if (!whereConditions.isEmpty()) {
+            query += ' WHERE ' + String.join(whereConditions, ' AND ');
+        }
+
+        if (!String.isBlank(orderByClause)) {
+            query += ' ' + orderByClause;
+        }
+
+        if (limitSize != null) {
+            query += ' LIMIT ' + limitSize;
+        }
+
+        if (offsetSize != null) {
+            query += ' OFFSET ' + offsetSize;
+        }
+
+        return Database.query(query);
+    }
+
+    // ------------------------------
+    // Helpers
+    // ------------------------------
+    private String buildCondition(String field, String operator, Object value) {
+        return field + ' ' + operator + ' ' + formatValue(value);
+    }
+
+    private String formatValue(Object value) {
+        if (value == null) return 'NULL';
+
+        if (value instanceof String) {
+            String s = (String)value;
+            // Handle special date keywords (e.g., TODAY, YESTERDAY)
+            if (s.matches('(?i)TODAY|YESTERDAY|TOMORROW|LAST_N_DAYS:\\d+|NEXT_N_DAYS:\\d+|THIS_MONTH|LAST_WEEK')) {
+                return s.toUpperCase();
+            }
+            return '\'' + String.escapeSingleQuotes(s) + '\'';
+        }
+
+        if (value instanceof Date || value instanceof DateTime) {
+            return '\'' + value.format() + '\'';
+        }
+
+        if (value instanceof Boolean || value instanceof Integer || value instanceof Long || value instanceof Decimal || value instanceof Double) {
+            return String.valueOf(value);
+        }
+
+        return '\'' + String.escapeSingleQuotes(String.valueOf(value)) + '\'';
+    }
+}
+
+
+---
+
+🧪 Example Usages
+
+🔹 Basic Usage
+
+List<Account> accounts = (List<Account>) new GenericDAL()
+    .from('Account')
+    .selectFields(new List<String>{'Id', 'Name'})
+    .where('Industry', '=', 'Technology')
+    .where('CreatedDate', '>=', 'LAST_N_DAYS:30')
+    .orderBy('CreatedDate', false)
+    .limit(10)
+    .execute();
+
+
+---
+
+🔹 IN Clause & Date
+
+List<Account> accounts = (List<Account>) new GenericDAL()
+    .from('Account')
+    .selectField('Id')
+    .whereIn('Id', new List<Id>{'001xx000003DGv5AAG', '001xx000003DGv6AAG'})
+    .where('CreatedDate', '>=', Date.today().addDays(-15))
+    .execute();
+
+
+---
+
+🔹 Subquery
+
+List<Account> accounts = (List<Account>) new GenericDAL()
+    .from('Account')
+    .selectField('Name')
+    .addSubquery('(SELECT Id, Subject FROM Cases)')
+    .where('Industry', '=', 'Retail')
+    .limit(5)
+    .execute();
+
+
+---
+
+🔹 Dynamic Filters from a Map
+
+Map<String, Object> filters = new Map<String, Object>{
+    'Industry' => 'Finance',
+    'IsActive__c' => true
+};
+
+List<Account> accounts = (List<Account>) new GenericDAL()
+    .from('Account')
+    .selectFields(new List<String>{'Id', 'Name'})
+    .whereFromMap(filters)
+    .limit(20)
+    .execute();
+
+
+---
+
+✅ Final Thoughts
+
+This class is highly extensible and clean. If you want to expand it further, you can add support for:
+
+GROUP BY / HAVING
+
+WITH SECURITY_ENFORCED
+
+COUNT(), aggregate functions
+
+Query plan inspection (in debug)
+
+
+Would you like a version with logging/debug mode or a test class example for coverage?
+
