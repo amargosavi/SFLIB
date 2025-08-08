@@ -1,0 +1,164 @@
+Got it — you want a dynamic Salesforce integration utility that:
+
+1. Uses the Builder Pattern – so you can fluently configure endpoints, HTTP methods, headers, body, etc.
+
+
+2. Supports interface-based dependency injection – so you can plug in different REST call handling implementations (good for testing, mock responses, or swapping providers).
+
+
+3. Performs REST callouts – in a clean, reusable way.
+
+
+
+I’ll give you a production-grade Apex example with clear separation of concerns.
+
+
+---
+
+1. The Interface – Defines the contract for REST execution
+
+public interface IRestExecutor {
+    HttpResponse execute(HttpRequest request);
+}
+
+This ensures we can inject different executors — real HTTP or mocks.
+
+
+---
+
+2. The Default Implementation – Does the real HTTP call
+
+public class DefaultRestExecutor implements IRestExecutor {
+    public HttpResponse execute(HttpRequest request) {
+        Http http = new Http();
+        return http.send(request);
+    }
+}
+
+Later you can create a MockRestExecutor for unit tests.
+
+
+---
+
+3. The Builder – Fluent setup for integration calls
+
+public class RestRequestBuilder {
+    private String endpoint;
+    private String method = 'GET';
+    private String body;
+    private Map<String, String> headers = new Map<String, String>();
+    private IRestExecutor executor;
+
+    // Constructor with Dependency Injection
+    public RestRequestBuilder(IRestExecutor executor) {
+        this.executor = executor;
+    }
+
+    public RestRequestBuilder setEndpoint(String endpoint) {
+        this.endpoint = endpoint;
+        return this;
+    }
+
+    public RestRequestBuilder setMethod(String method) {
+        this.method = method;
+        return this;
+    }
+
+    public RestRequestBuilder setBody(String body) {
+        this.body = body;
+        return this;
+    }
+
+    public RestRequestBuilder addHeader(String key, String value) {
+        headers.put(key, value);
+        return this;
+    }
+
+    public HttpResponse execute() {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(endpoint);
+        req.setMethod(method);
+
+        for (String key : headers.keySet()) {
+            req.setHeader(key, headers.get(key));
+        }
+
+        if (body != null) {
+            req.setBody(body);
+        }
+
+        return executor.execute(req);
+    }
+}
+
+
+---
+
+4. Example Usage – Real REST call
+
+public class MyIntegrationService {
+    public static void callExampleApi() {
+        IRestExecutor executor = new DefaultRestExecutor(); // Inject real executor
+
+        HttpResponse res = new RestRequestBuilder(executor)
+            .setEndpoint('callout:MyNamedCredential/some/api/path')
+            .setMethod('POST')
+            .addHeader('Content-Type', 'application/json')
+            .setBody('{"key":"value"}')
+            .execute();
+
+        System.debug('Status: ' + res.getStatus());
+        System.debug('Body: ' + res.getBody());
+    }
+}
+
+
+---
+
+5. Example Usage – Mock for Unit Test
+
+@IsTest
+private class MockRestExecutor implements IRestExecutor {
+    public HttpResponse execute(HttpRequest request) {
+        HttpResponse res = new HttpResponse();
+        res.setStatusCode(200);
+        res.setBody('{"message":"Mock success"}');
+        return res;
+    }
+}
+
+@IsTest
+private class MyIntegrationServiceTest {
+    @IsTest
+    static void testApiCall() {
+        IRestExecutor mockExecutor = new MockRestExecutor();
+
+        HttpResponse res = new RestRequestBuilder(mockExecutor)
+            .setEndpoint('callout:Fake')
+            .setMethod('GET')
+            .execute();
+
+        System.assertEquals(200, res.getStatusCode());
+        System.assert(res.getBody().contains('Mock success'));
+    }
+}
+
+
+---
+
+✅ Benefits of this design:
+
+Builder Pattern → fluent, readable integration calls.
+
+Interface-based dependency injection → easily swap between real & mock executors.
+
+Test-friendly → no Test.setMock() needed; you control the dependency directly.
+
+Extensible → can add retry logic, logging, authentication decorators, etc.
+
+
+
+---
+
+If you want, I can extend this so the builder also supports query parameter chaining and automatic JSON serialization for the request body, making it even more dynamic. That way you could pass an sObject or Map and it handles JSON.serialize() automatically. Would you like me to add that version?
+
