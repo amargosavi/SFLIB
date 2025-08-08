@@ -1,0 +1,212 @@
+Alright — you want a production-ready Apex integration utility that is:
+
+Dynamic and reusable
+
+Builder Pattern for fluent setup
+
+Strategy Pattern for flexible REST execution logic
+
+Interface Dependency Injection for testability and flexibility
+
+Query parameter chaining with Map<String, String>
+
+No hardcoded literals → constants only, to follow best practices
+
+
+I’ll give you a full Salesforce-ready design that you can drop into your org.
+
+
+---
+
+1. Constants – No Hardcoded Strings
+
+public class IntegrationConstants {
+    public static final String METHOD_GET     = 'GET';
+    public static final String METHOD_POST    = 'POST';
+    public static final String METHOD_PUT     = 'PUT';
+    public static final String METHOD_DELETE  = 'DELETE';
+    public static final String CONTENT_TYPE   = 'Content-Type';
+    public static final String CONTENT_JSON   = 'application/json';
+    public static final String CHARSET_UTF8   = 'UTF-8';
+    public static final String QUESTION_MARK  = '?';
+    public static final String AMPERSAND      = '&';
+    public static final String EQUALS         = '=';
+    public static final String EMPTY_STRING   = '';
+}
+
+
+---
+
+2. The Strategy Interface – Defines Execution Contract
+
+public interface IRestStrategy {
+    HttpResponse execute(HttpRequest request);
+}
+
+
+---
+
+3. Real Strategy – For actual HTTP callouts
+
+public class RealRestStrategy implements IRestStrategy {
+    public HttpResponse execute(HttpRequest request) {
+        Http http = new Http();
+        return http.send(request);
+    }
+}
+
+
+---
+
+4. Mock Strategy – For Unit Tests (Optional)
+
+@IsTest
+public class MockRestStrategy implements IRestStrategy {
+    public HttpResponse execute(HttpRequest request) {
+        HttpResponse res = new HttpResponse();
+        res.setStatusCode(200);
+        res.setBody('{"status":"mock-success"}');
+        return res;
+    }
+}
+
+
+---
+
+5. The Builder – Fluent, Dynamic, with Query Parameter Chaining
+
+public class RestRequestBuilder {
+    private String endpoint;
+    private String method = IntegrationConstants.METHOD_GET;
+    private String body;
+    private Map<String, String> headers = new Map<String, String>();
+    private Map<String, String> queryParams = new Map<String, String>();
+    private IRestStrategy strategy;
+
+    // Dependency Injection through constructor
+    public RestRequestBuilder(IRestStrategy strategy) {
+        this.strategy = strategy;
+    }
+
+    public RestRequestBuilder setEndpoint(String endpoint) {
+        this.endpoint = endpoint;
+        return this;
+    }
+
+    public RestRequestBuilder setMethod(String method) {
+        this.method = method;
+        return this;
+    }
+
+    public RestRequestBuilder setBody(String body) {
+        this.body = body;
+        return this;
+    }
+
+    public RestRequestBuilder addHeader(String key, String value) {
+        headers.put(key, value);
+        return this;
+    }
+
+    public RestRequestBuilder addQueryParam(String key, String value) {
+        queryParams.put(key, value);
+        return this;
+    }
+
+    // Builds the final URL with query parameters
+    private String buildEndpointWithParams() {
+        if (queryParams.isEmpty()) {
+            return endpoint;
+        }
+        List<String> pairs = new List<String>();
+        for (String key : queryParams.keySet()) {
+            pairs.add(EncodingUtil.urlEncode(key, IntegrationConstants.CHARSET_UTF8) 
+                + IntegrationConstants.EQUALS 
+                + EncodingUtil.urlEncode(queryParams.get(key), IntegrationConstants.CHARSET_UTF8));
+        }
+        return endpoint + IntegrationConstants.QUESTION_MARK + String.join(pairs, IntegrationConstants.AMPERSAND);
+    }
+
+    public HttpResponse execute() {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(buildEndpointWithParams());
+        req.setMethod(method);
+
+        for (String key : headers.keySet()) {
+            req.setHeader(key, headers.get(key));
+        }
+
+        if (body != null && body != IntegrationConstants.EMPTY_STRING) {
+            req.setBody(body);
+        }
+
+        return strategy.execute(req);
+    }
+}
+
+
+---
+
+6. Example Service Class – Using Builder + Strategy
+
+public class ExampleIntegrationService {
+    public static HttpResponse fetchData(String recordId) {
+        IRestStrategy strategy = new RealRestStrategy(); // Inject real implementation
+
+        return new RestRequestBuilder(strategy)
+            .setEndpoint('callout:MyNamedCredential/api/resource')
+            .setMethod(IntegrationConstants.METHOD_GET)
+            .addHeader(IntegrationConstants.CONTENT_TYPE, IntegrationConstants.CONTENT_JSON)
+            .addQueryParam('id', recordId)
+            .addQueryParam('includeDetails', 'true')
+            .execute();
+    }
+}
+
+
+---
+
+7. Unit Test – Using Mock Strategy
+
+@IsTest
+private class ExampleIntegrationServiceTest {
+    @IsTest
+    static void testFetchData() {
+        IRestStrategy mockStrategy = new MockRestStrategy();
+
+        HttpResponse res = new RestRequestBuilder(mockStrategy)
+            .setEndpoint('callout:FakeEndpoint')
+            .setMethod(IntegrationConstants.METHOD_GET)
+            .addQueryParam('id', '123')
+            .execute();
+
+        System.assertEquals(200, res.getStatusCode());
+        System.assert(res.getBody().contains('mock-success'));
+    }
+}
+
+
+---
+
+🔹 Why This Design is Best Practice
+
+Builder Pattern → easy-to-read fluent API
+
+Strategy Pattern → execution logic is swappable (real/mocked)
+
+Dependency Injection → testable & flexible without changing core logic
+
+No literals → constants for reusability and avoiding typos
+
+Query parameter chaining → safe URL encoding for all parameters
+
+Named Credential Ready → endpoint compatible with Salesforce secure callouts
+
+
+
+---
+
+If you want, I can extend this further so the builder supports automatic JSON serialization from Maps or sObjects, meaning you just pass a Map and it calls JSON.serialize() internally — no manual setBody() needed. That would make integrations even cleaner.
+
+Do you want me to add that enhancement?
+
