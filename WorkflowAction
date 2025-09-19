@@ -1,0 +1,266 @@
+Perfect 👌 — you want the workflow engine to be implemented using Builder Pattern + Strategy Pattern + Dependency Injection, so it’s clean, extensible, and testable like a professional enterprise framework.
+
+I’ll walk you through the design and then give you Apex code.
+
+
+---
+
+🔹 Design Overview
+
+1. Strategy Pattern
+Each Action Type (FieldUpdate, Email, Task, API) becomes its own Action Strategy class that implements a common interface.
+
+Example: IWorkflowAction → FieldUpdateAction, EmailAction, TaskAction, ApiAction.
+
+
+
+2. Builder Pattern
+A WorkflowRuleBuilder assembles a WorkflowRule object from Workflow_Config__c records.
+
+This way, the engine builds a rule object graph from config before execution.
+
+
+
+3. Dependency Injection (DI)
+The engine doesn’t hardcode which strategy to use.
+Instead, it injects a strategy factory (like a registry of action handlers).
+
+Example: ActionFactory.getAction(cfg.Action_Type__c) returns the right strategy.
+
+
+
+
+
+---
+
+🔹 Apex Code
+
+1. Common Interface (Strategy)
+
+public interface IWorkflowAction {
+    void execute(SObject record, Workflow_Config__c config, Boolean isBefore);
+}
+
+
+---
+
+2. Strategies (Implementations)
+
+public class FieldUpdateAction implements IWorkflowAction {
+    public void execute(SObject record, Workflow_Config__c config, Boolean isBefore) {
+        if (isBefore) {
+            record.put(config.Action_Field__c, config.Action_Value__c);
+        }
+    }
+}
+
+public class EmailAction implements IWorkflowAction {
+    public void execute(SObject record, Workflow_Config__c config, Boolean isBefore) {
+        if (!isBefore) {
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            mail.setTargetObjectId(UserInfo.getUserId());
+            mail.setTemplateId(config.Email_Template_Id__c);
+            mail.setSaveAsActivity(false);
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+        }
+    }
+}
+
+public class TaskAction implements IWorkflowAction {
+    public void execute(SObject record, Workflow_Config__c config, Boolean isBefore) {
+        if (!isBefore) {
+            Task t = new Task(
+                WhatId = record.Id,
+                Subject = config.Task_Subject__c,
+                Status = config.Task_Status__c,
+                OwnerId = UserInfo.getUserId()
+            );
+            insert t;
+        }
+    }
+}
+
+public class ApiAction implements IWorkflowAction {
+    public void execute(SObject record, Workflow_Config__c config, Boolean isBefore) {
+        if (!isBefore) {
+            if (config.API_Type__c == 'Apex') {
+                WorkflowApiInvoker.invokeApex(config.API_Method__c, record);
+            } else if (config.API_Type__c == 'REST') {
+                WorkflowApiInvoker.invokeRest(config, record);
+            }
+        }
+    }
+}
+
+
+---
+
+3. Action Factory (Dependency Injection)
+
+public class ActionFactory {
+    private static Map<String, IWorkflowAction> actions;
+
+    static {
+        actions = new Map<String, IWorkflowAction>{
+            'FieldUpdate' => new FieldUpdateAction(),
+            'Email'       => new EmailAction(),
+            'Task'        => new TaskAction(),
+            'API'         => new ApiAction()
+        };
+    }
+
+    public static IWorkflowAction getAction(String actionType) {
+        return actions.get(actionType);
+    }
+}
+
+
+---
+
+4. Workflow Rule (Builder Product)
+
+public class WorkflowRule {
+    public String logicType { get; set; }
+    public List<Workflow_Config__c> configs { get; set; }
+
+    public WorkflowRule(String logicType, List<Workflow_Config__c> configs) {
+        this.logicType = logicType;
+        this.configs = configs;
+    }
+
+    public Boolean evaluate(SObject record) {
+        if (configs.isEmpty()) return false;
+        Boolean result = (logicType == 'AND');
+
+        for (Workflow_Config__c cfg : configs) {
+            Object fieldValue = record.get(cfg.Field_API__c);
+            Boolean condition = WorkflowEvaluator.evaluate(fieldValue, cfg.Operator__c, cfg.Value__c);
+
+            if (logicType == 'AND') {
+                result = result && condition;
+                if (!result) break;
+            } else if (logicType == 'OR') {
+                result = result || condition;
+                if (result) break;
+            }
+        }
+        return result;
+    }
+
+    public void execute(SObject record, Boolean isBefore) {
+        for (Workflow_Config__c cfg : configs) {
+            IWorkflowAction action = ActionFactory.getAction(cfg.Action_Type__c);
+            if (action != null) {
+                action.execute(record, cfg, isBefore);
+            }
+        }
+    }
+}
+
+
+---
+
+5. Builder Class
+
+public class WorkflowRuleBuilder {
+    public static List<WorkflowRule> buildRules(String objectName) {
+        List<Workflow_Config__c> configs = [
+            SELECT Id, Group__c, Field_API__c, Operator__c, Value__c,
+                   Logic_Type__c, Action_Type__c, Action_Field__c, Action_Value__c,
+                   Email_Template_Id__c, Task_Subject__c, Task_Status__c,
+                   API_Method__c, API_Type__c, API_Payload__c
+            FROM Workflow_Config__c
+            WHERE Object_API__c = :objectName
+        ];
+
+        Map<String, List<Workflow_Config__c>> grouped = new Map<String, List<Workflow_Config__c>>();
+        for (Workflow_Config__c cfg : configs) {
+            if (!grouped.containsKey(cfg.Group__c)) {
+                grouped.put(cfg.Group__c, new List<Workflow_Config__c>());
+            }
+            grouped.get(cfg.Group__c).add(cfg);
+        }
+
+        List<WorkflowRule> rules = new List<WorkflowRule>();
+        for (String groupKey : grouped.keySet()) {
+            List<Workflow_Config__c> groupConfigs = grouped.get(groupKey);
+            String logicType = groupConfigs[0].Logic_Type__c;
+            rules.add(new WorkflowRule(logicType, groupConfigs));
+        }
+        return rules;
+    }
+}
+
+
+---
+
+6. Workflow Engine (Clean Controller)
+
+public class WorkflowEngine {
+    public static void run(List<SObject> newRecords, Map<Id, SObject> oldMap, Boolean isBefore, Boolean isInsert) {
+        if (newRecords.isEmpty()) return;
+        String objectName = String.valueOf(newRecords[0].getSObjectType());
+
+        List<WorkflowRule> rules = WorkflowRuleBuilder.buildRules(objectName);
+
+        for (SObject record : newRecords) {
+            for (WorkflowRule rule : rules) {
+                if (rule.evaluate(record)) {
+                    rule.execute(record, isBefore);
+                }
+            }
+        }
+    }
+}
+
+
+---
+
+7. API Invoker Utility (Helper for ApiAction)
+
+public class WorkflowApiInvoker {
+    @future
+    public static void invokeApex(String methodQualifiedName, SObject record) {
+        List<String> parts = methodQualifiedName.split('\\.');
+        if (parts.size() < 2) return;
+
+        String className = String.join(parts.subList(0, parts.size() - 1), '.');
+        String methodName = parts[parts.size() - 1];
+
+        Type t = Type.forName(className);
+        if (t != null) {
+            t.getMethod(methodName, new List<Type>{ SObject.class })
+             .invoke(null, new List<Object>{ record });
+        }
+    }
+
+    @future(callout=true)
+    public static void invokeRest(Workflow_Config__c cfg, SObject record) {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(cfg.API_Method__c);
+        req.setMethod('POST');
+        String payload = cfg.API_Payload__c.replace('{Id}', String.valueOf(record.Id));
+        req.setHeader('Content-Type', 'application/json');
+        req.setBody(payload);
+
+        Http http = new Http();
+        HttpResponse res = http.send(req);
+        System.debug('REST Response: ' + res.getBody());
+    }
+}
+
+
+---
+
+🔹 Benefits
+
+✅ Strategy Pattern → Each action type is a plug-and-play strategy.
+✅ Builder Pattern → Rules are constructed cleanly from config.
+✅ Dependency Injection → ActionFactory wires strategies at runtime, engine stays decoupled.
+✅ Easy to add new actions (e.g., “ChatterPostAction”, “PublishEventAction”) without touching engine code.
+
+
+---
+
+Would you like me to also add a Unit Test class template for this DI + Builder + Strategy framework (covering all action types), so it’s deployment-ready?
+
