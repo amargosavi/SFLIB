@@ -1,146 +1,89 @@
-Perfect 👌 — you want the workflow engine to be implemented using Builder Pattern + Strategy Pattern + Dependency Injection, so it’s clean, extensible, and testable like a professional enterprise framework.
-
-I’ll walk you through the design and then give you Apex code.
-
-
----
-
-🔹 Design Overview
-
-1. Strategy Pattern
-Each Action Type (FieldUpdate, Email, Task, API) becomes its own Action Strategy class that implements a common interface.
-
-Example: IWorkflowAction → FieldUpdateAction, EmailAction, TaskAction, ApiAction.
-
-
-
-2. Builder Pattern
-A WorkflowRuleBuilder assembles a WorkflowRule object from Workflow_Config__c records.
-
-This way, the engine builds a rule object graph from config before execution.
-
-
-
-3. Dependency Injection (DI)
-The engine doesn’t hardcode which strategy to use.
-Instead, it injects a strategy factory (like a registry of action handlers).
-
-Example: ActionFactory.getAction(cfg.Action_Type__c) returns the right strategy.
-
-
-
+Excellent point 👌 — right now, we’ve got conditions and actions mixed together in the same config object.
+If you want true workflow behavior, we should separate them:
 
 
 ---
 
-🔹 Apex Code
+🔹 Refined Data Model
 
-1. Common Interface (Strategy)
+1. Workflow__c (the “rule” itself)
 
-public interface IWorkflowAction {
-    void execute(SObject record, Workflow_Config__c config, Boolean isBefore);
-}
+Name
+
+Object_API__c (e.g., Account)
+
+Logic_Type__c (AND / OR)
+
+Active__c (Checkbox)
 
 
----
 
-2. Strategies (Implementations)
+2. WorkflowCondition__c (the conditions for the workflow)
 
-public class FieldUpdateAction implements IWorkflowAction {
-    public void execute(SObject record, Workflow_Config__c config, Boolean isBefore) {
-        if (isBefore) {
-            record.put(config.Action_Field__c, config.Action_Value__c);
-        }
-    }
-}
+Lookup to Workflow__c
 
-public class EmailAction implements IWorkflowAction {
-    public void execute(SObject record, Workflow_Config__c config, Boolean isBefore) {
-        if (!isBefore) {
-            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-            mail.setTargetObjectId(UserInfo.getUserId());
-            mail.setTemplateId(config.Email_Template_Id__c);
-            mail.setSaveAsActivity(false);
-            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
-        }
-    }
-}
+Field_API__c
 
-public class TaskAction implements IWorkflowAction {
-    public void execute(SObject record, Workflow_Config__c config, Boolean isBefore) {
-        if (!isBefore) {
-            Task t = new Task(
-                WhatId = record.Id,
-                Subject = config.Task_Subject__c,
-                Status = config.Task_Status__c,
-                OwnerId = UserInfo.getUserId()
-            );
-            insert t;
-        }
-    }
-}
+Operator__c (Equals, Not Equals, Greater, Less, Contains)
 
-public class ApiAction implements IWorkflowAction {
-    public void execute(SObject record, Workflow_Config__c config, Boolean isBefore) {
-        if (!isBefore) {
-            if (config.API_Type__c == 'Apex') {
-                WorkflowApiInvoker.invokeApex(config.API_Method__c, record);
-            } else if (config.API_Type__c == 'REST') {
-                WorkflowApiInvoker.invokeRest(config, record);
-            }
-        }
-    }
-}
+Value__c
+
+
+
+3. WorkflowAction__c (the actions for the workflow)
+
+Lookup to Workflow__c
+
+Action_Type__c (FieldUpdate, Email, Task, API)
+
+Action_Field__c
+
+Action_Value__c
+
+Email_Template_Id__c
+
+Task_Subject__c, Task_Status__c
+
+API_Type__c (Apex, REST)
+
+API_Method__c
+
+API_Payload__c
+
+
+
 
 
 ---
 
-3. Action Factory (Dependency Injection)
+🔹 Apex Framework (Builder + Strategy + DI)
 
-public class ActionFactory {
-    private static Map<String, IWorkflowAction> actions;
-
-    static {
-        actions = new Map<String, IWorkflowAction>{
-            'FieldUpdate' => new FieldUpdateAction(),
-            'Email'       => new EmailAction(),
-            'Task'        => new TaskAction(),
-            'API'         => new ApiAction()
-        };
-    }
-
-    public static IWorkflowAction getAction(String actionType) {
-        return actions.get(actionType);
-    }
-}
-
-
----
-
-4. Workflow Rule (Builder Product)
+1. Workflow Rule Aggregate
 
 public class WorkflowRule {
-    public String logicType { get; set; }
-    public List<Workflow_Config__c> configs { get; set; }
+    public Workflow__c workflow { get; set; }
+    public List<WorkflowCondition__c> conditions { get; set; }
+    public List<WorkflowAction__c> actions { get; set; }
 
-    public WorkflowRule(String logicType, List<Workflow_Config__c> configs) {
-        this.logicType = logicType;
-        this.configs = configs;
+    public WorkflowRule(Workflow__c wf, List<WorkflowCondition__c> conds, List<WorkflowAction__c> acts) {
+        this.workflow = wf;
+        this.conditions = conds;
+        this.actions = acts;
     }
 
     public Boolean evaluate(SObject record) {
-        if (configs.isEmpty()) return false;
-        Boolean result = (logicType == 'AND');
+        if (conditions.isEmpty()) return false;
 
-        for (Workflow_Config__c cfg : configs) {
-            Object fieldValue = record.get(cfg.Field_API__c);
-            Boolean condition = WorkflowEvaluator.evaluate(fieldValue, cfg.Operator__c, cfg.Value__c);
+        Boolean result = (workflow.Logic_Type__c == 'AND');
+        for (WorkflowCondition__c cond : conditions) {
+            Object fieldValue = record.get(cond.Field_API__c);
+            Boolean check = WorkflowEvaluator.evaluate(fieldValue, cond.Operator__c, cond.Value__c);
 
-            if (logicType == 'AND') {
-                result = result && condition;
+            if (workflow.Logic_Type__c == 'AND') {
+                result = result && check;
                 if (!result) break;
-            } else if (logicType == 'OR') {
-                result = result || condition;
+            } else if (workflow.Logic_Type__c == 'OR') {
+                result = result || check;
                 if (result) break;
             }
         }
@@ -148,10 +91,10 @@ public class WorkflowRule {
     }
 
     public void execute(SObject record, Boolean isBefore) {
-        for (Workflow_Config__c cfg : configs) {
-            IWorkflowAction action = ActionFactory.getAction(cfg.Action_Type__c);
-            if (action != null) {
-                action.execute(record, cfg, isBefore);
+        for (WorkflowAction__c act : actions) {
+            IWorkflowAction handler = ActionFactory.getAction(act.Action_Type__c);
+            if (handler != null) {
+                handler.execute(record, act, isBefore);
             }
         }
     }
@@ -160,32 +103,45 @@ public class WorkflowRule {
 
 ---
 
-5. Builder Class
+2. Workflow Rule Builder
 
 public class WorkflowRuleBuilder {
     public static List<WorkflowRule> buildRules(String objectName) {
-        List<Workflow_Config__c> configs = [
-            SELECT Id, Group__c, Field_API__c, Operator__c, Value__c,
-                   Logic_Type__c, Action_Type__c, Action_Field__c, Action_Value__c,
-                   Email_Template_Id__c, Task_Subject__c, Task_Status__c,
-                   API_Method__c, API_Type__c, API_Payload__c
-            FROM Workflow_Config__c
-            WHERE Object_API__c = :objectName
+        List<Workflow__c> workflows = [
+            SELECT Id, Logic_Type__c
+            FROM Workflow__c
+            WHERE Object_API__c = :objectName AND Active__c = true
         ];
 
-        Map<String, List<Workflow_Config__c>> grouped = new Map<String, List<Workflow_Config__c>>();
-        for (Workflow_Config__c cfg : configs) {
-            if (!grouped.containsKey(cfg.Group__c)) {
-                grouped.put(cfg.Group__c, new List<Workflow_Config__c>());
-            }
-            grouped.get(cfg.Group__c).add(cfg);
+        Map<Id, List<WorkflowCondition__c>> condMap = new Map<Id, List<WorkflowCondition__c>>();
+        for (WorkflowCondition__c c : [
+            SELECT Id, Workflow__c, Field_API__c, Operator__c, Value__c
+            FROM WorkflowCondition__c
+            WHERE Workflow__c IN :workflows
+        ]) {
+            if (!condMap.containsKey(c.Workflow__c)) condMap.put(c.Workflow__c, new List<WorkflowCondition__c>());
+            condMap.get(c.Workflow__c).add(c);
+        }
+
+        Map<Id, List<WorkflowAction__c>> actMap = new Map<Id, List<WorkflowAction__c>>();
+        for (WorkflowAction__c a : [
+            SELECT Id, Workflow__c, Action_Type__c, Action_Field__c, Action_Value__c,
+                   Email_Template_Id__c, Task_Subject__c, Task_Status__c,
+                   API_Type__c, API_Method__c, API_Payload__c
+            FROM WorkflowAction__c
+            WHERE Workflow__c IN :workflows
+        ]) {
+            if (!actMap.containsKey(a.Workflow__c)) actMap.put(a.Workflow__c, new List<WorkflowAction__c>());
+            actMap.get(a.Workflow__c).add(a);
         }
 
         List<WorkflowRule> rules = new List<WorkflowRule>();
-        for (String groupKey : grouped.keySet()) {
-            List<Workflow_Config__c> groupConfigs = grouped.get(groupKey);
-            String logicType = groupConfigs[0].Logic_Type__c;
-            rules.add(new WorkflowRule(logicType, groupConfigs));
+        for (Workflow__c wf : workflows) {
+            rules.add(new WorkflowRule(
+                wf,
+                condMap.containsKey(wf.Id) ? condMap.get(wf.Id) : new List<WorkflowCondition__c>(),
+                actMap.containsKey(wf.Id) ? actMap.get(wf.Id) : new List<WorkflowAction__c>()
+            ));
         }
         return rules;
     }
@@ -194,7 +150,86 @@ public class WorkflowRuleBuilder {
 
 ---
 
-6. Workflow Engine (Clean Controller)
+3. Action Strategies
+
+(we separate actions from conditions now)
+
+public interface IWorkflowAction {
+    void execute(SObject record, WorkflowAction__c action, Boolean isBefore);
+}
+
+public class FieldUpdateAction implements IWorkflowAction {
+    public void execute(SObject record, WorkflowAction__c action, Boolean isBefore) {
+        if (isBefore) {
+            record.put(action.Action_Field__c, action.Action_Value__c);
+        }
+    }
+}
+
+public class EmailAction implements IWorkflowAction {
+    public void execute(SObject record, WorkflowAction__c action, Boolean isBefore) {
+        if (!isBefore) {
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            mail.setTargetObjectId(UserInfo.getUserId());
+            mail.setTemplateId(action.Email_Template_Id__c);
+            mail.setSaveAsActivity(false);
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+        }
+    }
+}
+
+public class TaskAction implements IWorkflowAction {
+    public void execute(SObject record, WorkflowAction__c action, Boolean isBefore) {
+        if (!isBefore) {
+            Task t = new Task(
+                WhatId = record.Id,
+                Subject = action.Task_Subject__c,
+                Status = action.Task_Status__c,
+                OwnerId = UserInfo.getUserId()
+            );
+            insert t;
+        }
+    }
+}
+
+public class ApiAction implements IWorkflowAction {
+    public void execute(SObject record, WorkflowAction__c action, Boolean isBefore) {
+        if (!isBefore) {
+            if (action.API_Type__c == 'Apex') {
+                WorkflowApiInvoker.invokeApex(action.API_Method__c, record);
+            } else if (action.API_Type__c == 'REST') {
+                WorkflowApiInvoker.invokeRest(action, record);
+            }
+        }
+    }
+}
+
+
+---
+
+4. Factory (Dependency Injection)
+
+public class ActionFactory {
+    private static Map<String, IWorkflowAction> registry;
+
+    static {
+        registry = new Map<String, IWorkflowAction>{
+            'FieldUpdate' => new FieldUpdateAction(),
+            'Email'       => new EmailAction(),
+            'Task'        => new TaskAction(),
+            'API'         => new ApiAction()
+        };
+    }
+
+    public static IWorkflowAction getAction(String type) {
+        return registry.get(type);
+    }
+}
+
+
+---
+
+5. Engine (Controller)
 
 public class WorkflowEngine {
     public static void run(List<SObject> newRecords, Map<Id, SObject> oldMap, Boolean isBefore, Boolean isInsert) {
@@ -216,51 +251,188 @@ public class WorkflowEngine {
 
 ---
 
-7. API Invoker Utility (Helper for ApiAction)
+✅ Now workflows are structured like Salesforce Workflow Rules:
 
-public class WorkflowApiInvoker {
-    @future
-    public static void invokeApex(String methodQualifiedName, SObject record) {
-        List<String> parts = methodQualifiedName.split('\\.');
-        if (parts.size() < 2) return;
+One Workflow (Workflow__c) → has multiple conditions (WorkflowCondition__c) → and multiple actions (WorkflowAction__c).
 
-        String className = String.join(parts.subList(0, parts.size() - 1), '.');
-        String methodName = parts[parts.size() - 1];
+Admins configure conditions and actions separately.
 
-        Type t = Type.forName(className);
-        if (t != null) {
-            t.getMethod(methodName, new List<Type>{ SObject.class })
-             .invoke(null, new List<Object>{ record });
+Code stays clean and extensible thanks to Builder + Strategy + DI.
+
+
+
+---
+
+WouldPerfect 👍 you want to extend actions to support “Send SMS with SMS template” and “Send Email with Email template” (just like Salesforce Workflow Actions).
+
+We can achieve this cleanly with our Strategy Pattern + DI setup by simply adding two new action strategies:
+
+
+---
+
+🔹 Data Model Changes
+
+In WorkflowAction__c, add fields:
+
+Action_Type__c (picklist → FieldUpdate, Email, Task, API, SMS)
+
+Email_Template_Id__c → (for Email)
+
+SMS_Template_Id__c → (for SMS)
+
+Recipient_Field__c → (field API that holds Phone or Email, e.g., Phone on Contact)
+
+
+
+---
+
+🔹 New Action Strategies
+
+EmailAction (already present, just extended for template use)
+
+public class EmailAction implements IWorkflowAction {
+    public void execute(SObject record, WorkflowAction__c action, Boolean isBefore) {
+        if (!isBefore) {
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            
+            // recipient field from record (e.g., Contact.Email)
+            String recipient = (String)record.get(action.Recipient_Field__c);
+            if (String.isNotBlank(recipient)) {
+                mail.setToAddresses(new String[]{recipient});
+            }
+
+            if (action.Email_Template_Id__c != null) {
+                mail.setTemplateId(action.Email_Template_Id__c);
+                mail.setTargetObjectId(UserInfo.getUserId()); // required for template merge
+            } else {
+                mail.setPlainTextBody(action.Action_Value__c);
+            }
+
+            mail.setSaveAsActivity(false);
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
         }
-    }
-
-    @future(callout=true)
-    public static void invokeRest(Workflow_Config__c cfg, SObject record) {
-        HttpRequest req = new HttpRequest();
-        req.setEndpoint(cfg.API_Method__c);
-        req.setMethod('POST');
-        String payload = cfg.API_Payload__c.replace('{Id}', String.valueOf(record.Id));
-        req.setHeader('Content-Type', 'application/json');
-        req.setBody(payload);
-
-        Http http = new Http();
-        HttpResponse res = http.send(req);
-        System.debug('REST Response: ' + res.getBody());
     }
 }
 
 
 ---
 
-🔹 Benefits
+SmsAction (new)
 
-✅ Strategy Pattern → Each action type is a plug-and-play strategy.
-✅ Builder Pattern → Rules are constructed cleanly from config.
-✅ Dependency Injection → ActionFactory wires strategies at runtime, engine stays decoupled.
-✅ Easy to add new actions (e.g., “ChatterPostAction”, “PublishEventAction”) without touching engine code.
+public class SmsAction implements IWorkflowAction {
+    public void execute(SObject record, WorkflowAction__c action, Boolean isBefore) {
+        if (!isBefore) {
+            String phone = (String)record.get(action.Recipient_Field__c);
+
+            if (String.isNotBlank(phone)) {
+                // Retrieve SMS template
+                SMS_Template__c smsTemplate = [
+                    SELECT Id, Body__c
+                    FROM SMS_Template__c
+                    WHERE Id = :action.SMS_Template_Id__c
+                    LIMIT 1
+                ];
+
+                String smsBody = smsTemplate.Body__c;
+
+                // Example: using a custom Apex SMS service
+                SmsService.sendSms(phone, smsBody);
+            }
+        }
+    }
+}
 
 
 ---
 
-Would you like me to also add a Unit Test class template for this DI + Builder + Strategy framework (covering all action types), so it’s deployment-ready?
+Example SMS Service Stub
+
+(you can plug in Twilio, Kaleyra, Msg91, or Salesforce’s native MessagingChannel if enabled)
+
+public class SmsService {
+    public static void sendSms(String phone, String message) {
+        // Example: future callout (to Twilio etc.)
+        System.debug('Sending SMS to ' + phone + ' => ' + message);
+
+        // If using a REST API integration, call Http here
+        // HttpRequest req = new HttpRequest();
+        // req.setEndpoint('callout:Twilio');
+        // req.setMethod('POST');
+        // req.setBody('To=' + phone + '&Body=' + message);
+        // new Http().send(req);
+    }
+}
+
+
+---
+
+🔹 Factory Update
+
+Just register SMS in the ActionFactory:
+
+public class ActionFactory {
+    private static Map<String, IWorkflowAction> registry;
+
+    static {
+        registry = new Map<String, IWorkflowAction>{
+            'FieldUpdate' => new FieldUpdateAction(),
+            'Email'       => new EmailAction(),
+            'Task'        => new TaskAction(),
+            'API'         => new ApiAction(),
+            'SMS'         => new SmsAction()
+        };
+    }
+
+    public static IWorkflowAction getAction(String type) {
+        return registry.get(type);
+    }
+}
+
+
+---
+
+✅ Now admins can configure a WorkflowAction__c like:
+
+Type = Email → pick Email Template, choose Recipient_Field__c (e.g., Email).
+
+Type = SMS → pick SMS Template, choose Recipient_Field__c (e.g., Phone).
+
+
+
+---
+
+👉 Question:
+Do you want me to make SMS Template a custom object (SMS_Template__c) like above, or should I reuse Salesforce Messaging Templates (if you are on Omni-Channel Messaging / Digital Engagement license)?
+
+
+
+
+
+
+you like me to add support for grouping conditions with parentheses (like (Cond1 AND Cond2) OR Cond3) or keep it at flat AND/OR logic for now?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
