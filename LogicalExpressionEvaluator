@@ -544,3 +544,26 @@ public class LogicalExpressionEvaluatorTest {
         };
         
         // Note: This is a simplified example. In practice, you'd need custom
+
+
+/ MHIMA is for you
+  public static Date parseDate(String input) {
+        input = input.trim().toLowerCase();
+        // Basic keywords
+        if (input == 'today') {
+            return Date.today();
+        }
+        if (input == 'tomorrow') {
+            return Date.today().addDays(1);
+        }
+        // Pattern: Today + N days
+        Pattern p = Pattern.compile('today\\s*\\+\\s*(\\d+)\\s*days');
+        Matcher m = p.matcher(input);
+        if (m.matches()) {
+            Integer daysToAdd = Integer.valueOf(m.group(1));
+            return Date.today().addDays(daysToAdd);
+        }
+        // Extend for 'Yesterday', etc. as needed
+        throw new IllegalArgumentException('Input not supported: ' + input);
+    }
+
