@@ -83,3 +83,19 @@ public class MetaAPIStaticResourceCSVLoader {
         }
     }
 }
+
+
+String result = MetaAPIStaticResourceCSVLoader.deployFromStaticResource(
+    'Country_Config__mdt',      // Your Custom Metadata API Name
+    'Country_Config_Import'     // Static Resource Name (no .csv)
+);
+System.debug(result);
+
+Proper Field Namming : 
+DeveloperName,Country_Code__c,Country_Name__c,Is_Active__c
+US,US,United States,true
+CA,CA,Canada,true
+MX,MX,Mexico,false
+
+
+
