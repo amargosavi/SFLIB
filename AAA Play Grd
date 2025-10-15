@@ -187,3 +187,307 @@ Boolean result = eval.evaluateExpression('(C1 AND (C2 OR C3))', conditionMap);
  
 System.debug('Expression result: ' + result);
 Would you like me to make it multi-record compatible (so it can evaluate workflow expressions for a list of records efficiently in bulk trigger context)? That would complete the CPU optimization story.
+
+№######
+
+
+
+Perfect — let’s extend the ExpressionEvaluator into a bulk-ready version 🚀
+
+This version will handle lists of SObjects, evaluating each record against the same metadata-driven workflow and logical expression — with full CPU optimization:
+
+Shared metadata cache (loaded once)
+
+Shared parsed expression tokens (no per-record parsing)
+
+Per-record field cache only
+
+Short-circuit and non-recursive logic preserved
+
+
+
+---
+
+⚙️ Final Optimized Bulk-Safe ExpressionEvaluator Apex Class
+
+public class ExpressionEvaluator {
+
+    // Static metadata + token cache for reuse in same transaction
+    private static Map<String, List<String>> expressionTokenCache = new Map<String, List<String>>();
+    private static Map<String, Map<String, WorkflowCondition__mdt>> conditionCacheGlobal = new Map<String, Map<String, WorkflowCondition__mdt>>();
+
+    // Per record cache
+    private Map<String, Object> fieldValueCache;
+    private Map<String, Boolean> conditionCache;
+
+    public ExpressionEvaluator(SObject record) {
+        this.fieldValueCache = getFieldValueMap(record);
+        this.conditionCache = new Map<String, Boolean>();
+    }
+
+    // -------------------------------------------
+    // Evaluate expression for a single record
+    // -------------------------------------------
+    public Boolean evaluateExpression(String expr, Map<String, WorkflowCondition__mdt> conditionMap) {
+        if (conditionMap == null || conditionMap.isEmpty()) return false;
+
+        expr = String.isBlank(expr) ? null : expr.replaceAll('\\s+', '');
+
+        // --- CASE 1: No expression (AND mode) ---
+        if (String.isBlank(expr)) {
+            for (String condName : conditionMap.keySet()) {
+                if (!evaluateCondition(condName, conditionMap)) return false; // short-circuit
+            }
+            return true;
+        }
+
+        // --- CASE 2: Expression provided ---
+        List<String> tokens;
+        if (expressionTokenCache.containsKey(expr)) {
+            tokens = expressionTokenCache.get(expr);
+        } else {
+            tokens = tokenize(expr);
+            expressionTokenCache.put(expr, tokens);
+        }
+
+        return evaluateTokens(tokens, conditionMap);
+    }
+
+    // -------------------------------------------
+    // Bulk evaluation for multiple records
+    // -------------------------------------------
+    public static Map<Id, Boolean> evaluateForRecords(
+        List<SObject> records,
+        String expr,
+        String workflowKey
+    ) {
+        Map<Id, Boolean> results = new Map<Id, Boolean>();
+
+        if (records == null || records.isEmpty()) return results;
+
+        // Load or reuse metadata condition map
+        Map<String, WorkflowCondition__mdt> conditionMap;
+        if (conditionCacheGlobal.containsKey(workflowKey)) {
+            conditionMap = conditionCacheGlobal.get(workflowKey);
+        } else {
+            conditionMap = new Map<String, WorkflowCondition__mdt>();
+            for (WorkflowCondition__mdt c : [
+                SELECT DeveloperName, Field_API_Name__c, Operator__c, Value__c
+                FROM WorkflowCondition__mdt
+                WHERE Workflow_Key__c = :workflowKey
+            ]) {
+                conditionMap.put(c.DeveloperName, c);
+            }
+            conditionCacheGlobal.put(workflowKey, conditionMap);
+        }
+
+        // Prepare shared token list once
+        List<String> tokens;
+        expr = String.isBlank(expr) ? null : expr.replaceAll('\\s+', '');
+        if (!String.isBlank(expr)) {
+            if (expressionTokenCache.containsKey(expr)) {
+                tokens = expressionTokenCache.get(expr);
+            } else {
+                tokens = tokenizeStatic(expr);
+                expressionTokenCache.put(expr, tokens);
+            }
+        } else {
+            tokens = null;
+        }
+
+        // Process records in bulk efficiently
+        for (SObject rec : records) {
+            ExpressionEvaluator eval = new ExpressionEvaluator(rec);
+            Boolean res;
+            if (tokens == null) {
+                res = eval.evaluateExpression(null, conditionMap); // AND mode
+            } else {
+                res = eval.evaluateTokens(tokens, conditionMap);
+            }
+            results.put(rec.Id, res);
+        }
+
+        return results;
+    }
+
+    // -------------------------------------------
+    // TOKENIZER (shared static + instance)
+    // -------------------------------------------
+    private static List<String> tokenizeStatic(String expr) {
+        List<String> tokens = new List<String>();
+        String current = '';
+        for (Integer i = 0; i < expr.length(); i++) {
+            String ch = expr.substring(i, i + 1);
+            if (ch == '(' || ch == ')' || ch == 'A' || ch == 'O' || ch == 'N') {
+                if (current != '') {
+                    tokens.add(current);
+                    current = '';
+                }
+                if (expr.substring(i).startsWith('AND')) {
+                    tokens.add('AND');
+                    i += 2;
+                } else if (expr.substring(i).startsWith('OR')) {
+                    tokens.add('OR');
+                    i += 1;
+                } else if (expr.substring(i).startsWith('NOT')) {
+                    tokens.add('NOT');
+                    i += 2;
+                } else if (ch == '(' || ch == ')') {
+                    tokens.add(ch);
+                }
+            } else {
+                current += ch;
+            }
+        }
+        if (current != '') tokens.add(current);
+        return tokens;
+    }
+
+    private List<String> tokenize(String expr) {
+        return tokenizeStatic(expr);
+    }
+
+    // -------------------------------------------
+    // STACK-BASED EVALUATION (no recursion)
+    // -------------------------------------------
+    private Boolean evaluateTokens(List<String> tokens, Map<String, WorkflowCondition__mdt> conditionMap) {
+        List<Boolean> valueStack = new List<Boolean>();
+        List<String> opStack = new List<String>();
+
+        for (String token : tokens) {
+            if (token == '(') {
+                opStack.add(token);
+            } else if (token == ')') {
+                while (!opStack.isEmpty() && opStack.get(opStack.size() - 1) != '(') {
+                    applyOperator(valueStack, opStack.remove(opStack.size() - 1));
+                }
+                if (!opStack.isEmpty()) opStack.remove(opStack.size() - 1);
+            } else if (token == 'AND' || token == 'OR' || token == 'NOT') {
+                if (token == 'AND' && !valueStack.isEmpty() && valueStack.get(valueStack.size() - 1) == false)
+                    return false;
+                if (token == 'OR' && !valueStack.isEmpty() && valueStack.get(valueStack.size() - 1) == true)
+                    return true;
+                opStack.add(token);
+            } else {
+                valueStack.add(evaluateCondition(token, conditionMap));
+            }
+        }
+
+        while (!opStack.isEmpty()) {
+            applyOperator(valueStack, opStack.remove(opStack.size() - 1));
+        }
+
+        return (valueStack.isEmpty()) ? false : valueStack.get(valueStack.size() - 1);
+    }
+
+    // -------------------------------------------
+    // Operator application
+    // -------------------------------------------
+    private void applyOperator(List<Boolean> valueStack, String op) {
+        if (op == 'NOT') {
+            Boolean a = valueStack.remove(valueStack.size() - 1);
+            valueStack.add(!a);
+        } else {
+            Boolean b = valueStack.remove(valueStack.size() - 1);
+            Boolean a = valueStack.remove(valueStack.size() - 1);
+            valueStack.add(op == 'AND' ? (a && b) : (a || b));
+        }
+    }
+
+    // -------------------------------------------
+    // Evaluate individual condition (C1, C2)
+    // -------------------------------------------
+    private Boolean evaluateCondition(String conditionName, Map<String, WorkflowCondition__mdt> conditionMap) {
+        if (conditionCache.containsKey(conditionName)) return conditionCache.get(conditionName);
+
+        WorkflowCondition__mdt cond = conditionMap.get(conditionName);
+        if (cond == null) return false;
+
+        Object fieldVal = fieldValueCache.get(cond.Field_API_Name__c);
+        if (fieldVal == null) {
+            conditionCache.put(conditionName, false);
+            return false;
+        }
+
+        Boolean result = compare(fieldVal, cond.Value__c, cond.Operator__c);
+        conditionCache.put(conditionName, result);
+        return result;
+    }
+
+    // -------------------------------------------
+    // Compare operator values
+    // -------------------------------------------
+    private Boolean compare(Object fieldVal, Object compareVal, String op) {
+        String fieldStr = String.valueOf(fieldVal);
+        String compareStr = String.valueOf(compareVal);
+        switch on op {
+            when '='        { return fieldStr == compareStr; }
+            when '!='       { return fieldStr != compareStr; }
+            when '>'        { return Decimal.valueOf(fieldStr) > Decimal.valueOf(compareStr); }
+            when '<'        { return Decimal.valueOf(fieldStr) < Decimal.valueOf(compareStr); }
+            when '>='       { return Decimal.valueOf(fieldStr) >= Decimal.valueOf(compareStr); }
+            when '<='       { return Decimal.valueOf(fieldStr) <= Decimal.valueOf(compareStr); }
+            when 'contains' { return fieldStr.toLowerCase().contains(compareStr.toLowerCase()); }
+            when else       { return false; }
+        }
+    }
+
+    // -------------------------------------------
+    // Build field value cache per record
+    // -------------------------------------------
+    private Map<String, Object> getFieldValueMap(SObject record) {
+        Map<String, Object> result = new Map<String, Object>();
+        Map<String, SObjectField> fields = record.getSObjectType().getDescribe().fields.getMap();
+        for (String api : fields.keySet()) {
+            try {
+                result.put(api, record.get(api));
+            } catch (Exception e) {}
+        }
+        return result;
+    }
+}
+
+
+---
+
+🧠 Highlights
+
+Feature	Benefit
+
+Bulk-safe static caches	Metadata and expression tokens reused for all records
+One metadata SOQL per workflowKey	No repeated queries
+No recursion + short-circuit logic	Minimizes CPU
+Per-record field caching	Accesses record fields once
+Expression fallback to AND mode	Auto-runs all conditions if expression is empty
+
+
+
+---
+
+✅ Example Usage
+
+List<Account> accList = [SELECT Id, Industry, AnnualRevenue FROM Account LIMIT 200];
+
+// Evaluate workflow "ACC_RISK_RULES" for all accounts
+Map<Id, Boolean> results = ExpressionEvaluator.evaluateForRecords(
+    accList,
+    '(C1 AND (C2 OR C3))',   // or '' for AND mode
+    'ACC_RISK_RULES'
+);
+
+for (Id accId : results.keySet()) {
+    System.debug('Account ' + accId + ' => Result: ' + results.get(accId));
+}
+
+
+---
+
+Would you like me to add a Batch/Queueable helper next — so this evaluator can automatically process records in batches (like in a nightly job or trigger handler) while respecting Salesforce limits? That’s the final step to make this production-grade.
+
+
+
+
+
+
+
+
