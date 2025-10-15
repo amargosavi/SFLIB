@@ -1,0 +1,189 @@
+Perfect 👍 — let’s rebuild your ExpressionEvaluator class from scratch in an optimized, non-recursive, metadata-driven way so it:
+Avoids CPU timeout,
+Uses short-circuit evaluation,
+Caches field values and metadata, and
+Is fully reusable inside your workflow framework.
+⚙️ Optimized ExpressionEvaluator Apex Class
+public class ExpressionEvaluator {
+ 
+    // Cache maps for field values and condition results
+    private Map<String, Object> fieldValueCache;
+    private Map<String, Boolean> conditionCache;
+ 
+    public ExpressionEvaluator(SObject record) {
+        this.fieldValueCache = getFieldValueMap(record);
+        this.conditionCache = new Map<String, Boolean>();
+    }
+ 
+    /**
+     * Evaluate full logical expression string like:
+     * (C1 AND (C2 OR C3)) AND NOT C4
+     */
+    public Boolean evaluateExpression(String expr, Map<String, WorkflowCondition__mdt> conditionMap) {
+        if (String.isBlank(expr)) return false;
+        expr = expr.replaceAll('\\s+', ''); // clean spaces
+ 
+        List<String> tokens = tokenize(expr);
+        return evaluateTokens(tokens, conditionMap);
+    }
+ 
+    // -----------------------------------------
+    // TOKENIZER: converts expression to tokens
+    // -----------------------------------------
+    private List<String> tokenize(String expr) {
+        List<String> tokens = new List<String>();
+        String current = '';
+        for (Integer i = 0; i < expr.length(); i++) {
+            String ch = expr.substring(i, i + 1);
+            if (ch == '(' || ch == ')' || ch == 'A' || ch == 'O' || ch == 'N') {
+                // break words like AND / OR / NOT
+                if (current != '') {
+                    tokens.add(current);
+                    current = '';
+                }
+                if (expr.substring(i).startsWith('AND')) {
+                    tokens.add('AND');
+                    i += 2;
+                } else if (expr.substring(i).startsWith('OR')) {
+                    tokens.add('OR');
+                    i += 1;
+                } else if (expr.substring(i).startsWith('NOT')) {
+                    tokens.add('NOT');
+                    i += 2;
+                } else if (ch == '(' || ch == ')') {
+                    tokens.add(ch);
+                }
+            } else {
+                current += ch;
+            }
+        }
+        if (current != '') tokens.add(current);
+        return tokens;
+    }
+ 
+    // -----------------------------------------
+    // CORE LOGIC: stack-based non-recursive eval
+    // -----------------------------------------
+    private Boolean evaluateTokens(List<String> tokens, Map<String, WorkflowCondition__mdt> conditionMap) {
+        List<Boolean> valueStack = new List<Boolean>();
+        List<String> opStack = new List<String>();
+ 
+        for (String token : tokens) {
+            if (token == '(') {
+                opStack.add(token);
+            } else if (token == ')') {
+                while (!opStack.isEmpty() && opStack.get(opStack.size() - 1) != '(') {
+                    applyOperator(valueStack, opStack.remove(opStack.size() - 1));
+                }
+                if (!opStack.isEmpty()) opStack.remove(opStack.size() - 1);
+            } else if (token == 'AND' || token == 'OR' || token == 'NOT') {
+                // short-circuit optimization
+                if (token == 'AND' && !valueStack.isEmpty() && valueStack.get(valueStack.size() - 1) == false)
+                    return false;
+                if (token == 'OR' && !valueStack.isEmpty() && valueStack.get(valueStack.size() - 1) == true)
+                    return true;
+                opStack.add(token);
+            } else {
+                Boolean val = evaluateCondition(token, conditionMap);
+                valueStack.add(val);
+            }
+        }
+ 
+        while (!opStack.isEmpty()) {
+            applyOperator(valueStack, opStack.remove(opStack.size() - 1));
+        }
+ 
+        return (valueStack.isEmpty()) ? false : valueStack.get(valueStack.size() - 1);
+    }
+ 
+    // -----------------------------------------
+    // Apply AND / OR / NOT operator to stack
+    // -----------------------------------------
+    private void applyOperator(List<Boolean> valueStack, String op) {
+        if (op == 'NOT') {
+            Boolean a = valueStack.remove(valueStack.size() - 1);
+            valueStack.add(!a);
+        } else {
+            Boolean b = valueStack.remove(valueStack.size() - 1);
+            Boolean a = valueStack.remove(valueStack.size() - 1);
+            valueStack.add(op == 'AND' ? (a && b) : (a || b));
+        }
+    }
+ 
+    // -----------------------------------------
+    // Evaluate a single condition C1, C2, etc.
+    // -----------------------------------------
+    private Boolean evaluateCondition(String conditionName, Map<String, WorkflowCondition__mdt> conditionMap) {
+        if (conditionCache.containsKey(conditionName)) {
+            return conditionCache.get(conditionName);
+        }
+ 
+        WorkflowCondition__mdt cond = conditionMap.get(conditionName);
+        if (cond == null) return false;
+ 
+        Object fieldVal = fieldValueCache.get(cond.Field_API_Name__c);
+        Object compareVal = cond.Value__c;
+ 
+        Boolean result = false;
+        if (fieldVal == null) {
+            result = false;
+        } else {
+            String op = cond.Operator__c;
+            result = compare(fieldVal, compareVal, op);
+        }
+ 
+        conditionCache.put(conditionName, result);
+        return result;
+    }
+ 
+    // -----------------------------------------
+    // Simple operator comparison logic
+    // -----------------------------------------
+    private Boolean compare(Object fieldVal, Object compareVal, String op) {
+        String fieldStr = String.valueOf(fieldVal);
+        String compareStr = String.valueOf(compareVal);
+ 
+        switch on op {
+            when '='        { return fieldStr == compareStr; }
+            when '!='       { return fieldStr != compareStr; }
+            when '>'        { return Decimal.valueOf(fieldStr) > Decimal.valueOf(compareStr); }
+            when '<'        { return Decimal.valueOf(fieldStr) < Decimal.valueOf(compareStr); }
+            when '>='       { return Decimal.valueOf(fieldStr) >= Decimal.valueOf(compareStr); }
+            when '<='       { return Decimal.valueOf(fieldStr) <= Decimal.valueOf(compareStr); }
+            when 'contains' { return fieldStr.containsIgnoreCase(compareStr); }
+            when else       { return false; }
+        }
+    }
+ 
+    // -----------------------------------------
+    // Fetch record fields into a map once
+    // -----------------------------------------
+    private Map<String, Object> getFieldValueMap(SObject record) {
+        Map<String, Object> result = new Map<String, Object>();
+        for (SObjectField f : record.getSObjectType().getDescribe().fields.getMap().values()) {
+            String api = f.getDescribe().getName();
+            try {
+                result.put(api, record.get(api));
+            } catch (Exception e) {}
+        }
+        return result;
+    }
+}
+🚀 Highlights
+FeatureBenefitStack-based evaluator (no recursion)Avoids deep Apex call stack and CPU blowupsShort-circuit logicStops early on AND/OR chainsMetadata + field cacheNo repeated SOQL or reflection callsTokenized expression parsingHandles nested parentheses and NOT opsCondition cachingSkips re-evaluation of same condition within expression
+🔧 Example Usage
+Map<String, WorkflowCondition__mdt> conditionMap = new Map<String, WorkflowCondition__mdt>();
+for (WorkflowCondition__mdt c : [
+    SELECT DeveloperName, Field_API_Name__c, Operator__c, Value__c
+    FROM WorkflowCondition__mdt
+]) {
+    conditionMap.put(c.DeveloperName, c);
+}
+ 
+Account acc = [SELECT Id, Industry, AnnualRevenue FROM Account LIMIT 1];
+ 
+ExpressionEvaluator eval = new ExpressionEvaluator(acc);
+Boolean result = eval.evaluateExpression('(C1 AND (C2 OR C3))', conditionMap);
+ 
+System.debug('Expression result: ' + result);
+Would you like me to make it multi-record compatible (so it can evaluate workflow expressions for a list of records efficiently in bulk trigger context)? That would complete the CPU optimization story.
