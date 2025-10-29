@@ -1,3 +1,82 @@
+System.debug(EntitlementDateHelper.calculateMilestoneTargetDate(System.now(), null, 8));
+Datetime slaStart = System.now();
+Integer slaHours = 8;
+ 
+// Example: Using BusinessHours standard class
+Id bhId = [SELECT Id FROM BusinessHours WHERE IsDefault = true LIMIT 1].Id;
+ 
+// Add business hours (skips holidays automatically)
+Datetime slaDue = BusinessHours.add(bhId, slaStart, slaHours * 60 * 60 * 1000);
+ 
+caseRecord.SLA_Start_Date__c = slaStart;
+caseRecord.SLA_Due_Date__c = slaDue;
+public class CaseEntitlementHandler {
+    
+    public static void populateEntitlementDates(List<Case> caseList) {
+        Set<Id> accountIds = new Set<Id>();
+        for (Case c : caseList) {
+            if (c.AccountId != null && c.EntitlementId == null) {
+                accountIds.add(c.AccountId);
+            }
+        }
+        
+        if (accountIds.isEmpty()) return;
+ 
+        // Get matching Entitlements (active ones)
+        Map<Id, Entitlement> entitlementByAccount = new Map<Id, Entitlement>(
+            [SELECT Id, Name, StartDate, EndDate, AccountId, BusinessHoursId
+             FROM Entitlement
+             WHERE AccountId IN :accountIds AND IsActive = true
+             AND (EndDate = NULL OR EndDate >= TODAY)]
+        );
+ 
+        for (Case c : caseList) {
+            if (c.AccountId == null || c.EntitlementId != null) continue;
+ 
+            Entitlement e = entitlementByAccount.get(c.AccountId);
+            if (e == null) continue;
+ 
+            c.EntitlementId = e.Id;
+ 
+            // SLA Start = current time
+            Datetime slaStart = System.now();
+ 
+            // Use standard entitlement date helper for SLA due date
+            Datetime slaDue = null;
+            try {
+                slaDue = EntitlementDateHelper.calculateMilestoneTargetDate(
+                    slaStart,
+                    e.BusinessHoursId,
+                    8 // Example SLA in hours, can be dynamic
+                );
+            } catch (Exception ex) {
+                System.debug('Error calculating SLA date: ' + ex.getMessage());
+            }
+ 
+            if (slaDue != null) {
+                c.put('SLA_Start_Date__c', slaStart);
+                c.put('SLA_Due_Date__c', slaDue);
+            }
+        }
+    }
+}
+
+
+//
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Perfect 👍 — let’s rebuild your ExpressionEvaluator class from scratch in an optimized, non-recursive, metadata-driven way so it:
 Avoids CPU timeout,
 Uses short-circuit evaluation,
