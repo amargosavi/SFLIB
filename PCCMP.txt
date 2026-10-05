@@ -1,0 +1,15 @@
+html
+<c-searchable-combobox
+    label="Select Account"
+    items={accounts}
+    sort-field="Name"
+    sort-order="asc"
+    label-field="Name"
+    value-field="Id"
+    onitemselect={handleItemSelect}
+></c-searchable-combobox>
+js
+handleItemSelect(event) {
+    const record = event.detail.selectedItem; // full object, or null if cleared
+    this.selectedAccount = record;
+}

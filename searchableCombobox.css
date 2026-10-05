@@ -1,0 +1,13 @@
+:host {
+    display: block;
+}
+
+.slds-listbox__option.slds-has-focus {
+    background-color: #f3f3f3;
+    cursor: pointer;
+}
+
+.slds-listbox__option:hover {
+    background-color: #f3f3f3;
+    cursor: pointer;
+}

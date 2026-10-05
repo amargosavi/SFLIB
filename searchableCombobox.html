@@ -1,0 +1,94 @@
+<template>
+    <div class="slds-form-element">
+        <template lwc:if={label}>
+            <label class="slds-form-element__label" for="combobox-input">
+                <template lwc:if={required}>
+                    <abbr class="slds-required" title="required">*</abbr>
+                </template>
+                {label}
+            </label>
+        </template>
+
+        <div class="slds-form-element__control">
+            <div class="slds-combobox_container">
+                <div
+                    class={comboboxWrapperClass}
+                    role="combobox"
+                    aria-expanded={comboboxExpanded}
+                    aria-haspopup="listbox"
+                >
+                    <div class="slds-combobox__form-element slds-input-has-icon slds-input-has-icon_right" role="none">
+                        <input
+                            lwc:ref="input"
+                            type="text"
+                            id="combobox-input"
+                            class="slds-input slds-combobox__input"
+                            role="textbox"
+                            aria-autocomplete="list"
+                            aria-controls="listbox-id"
+                            autocomplete="off"
+                            placeholder={placeholder}
+                            value={searchTerm}
+                            disabled={disabled}
+                            onfocus={handleFocus}
+                            onblur={handleBlur}
+                            oninput={handleInput}
+                            onkeydown={handleKeyDown}
+                        />
+                        <template lwc:if={showClearButton}>
+                            <button
+                                class="slds-button slds-button_icon slds-input__icon slds-input__icon_right"
+                                title="Clear selection"
+                                tabindex="-1"
+                                onclick={handleClear}
+                            >
+                                <lightning-icon icon-name="utility:close" size="x-small" alternative-text="Clear"></lightning-icon>
+                            </button>
+                        </template>
+                        <template lwc:else>
+                            <lightning-icon
+                                icon-name="utility:search"
+                                size="x-small"
+                                class="slds-input__icon slds-input__icon_right"
+                            ></lightning-icon>
+                        </template>
+                    </div>
+
+                    <template lwc:if={isDropdownOpen}>
+                        <div
+                            id="listbox-id"
+                            class="slds-dropdown slds-dropdown_fluid slds-dropdown_length-5"
+                            role="listbox"
+                            onmousedown={handleListboxMouseDown}
+                        >
+                            <ul class="slds-listbox slds-listbox_vertical" role="presentation">
+                                <template for:each={filteredItems} for:item="option" for:index="idx">
+                                    <li key={option.key} role="presentation" class="slds-listbox__item">
+                                        <div
+                                            class={option.cssClass}
+                                            role="option"
+                                            data-index={idx}
+                                            onclick={handleOptionClick}
+                                        >
+                                            <span class="slds-media__body">
+                                                <span class="slds-truncate" title={option.label}>{option.label}</span>
+                                            </span>
+                                        </div>
+                                    </li>
+                                </template>
+
+                                <template lwc:if={showNoResults}>
+                                    <li class="slds-listbox__item" role="presentation">
+                                        <div class="slds-listbox__option slds-listbox__option_plain slds-media slds-media_small">
+                                            <span class="slds-media__body slds-text-color_weak">No results found</span>
+                                        </div>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
